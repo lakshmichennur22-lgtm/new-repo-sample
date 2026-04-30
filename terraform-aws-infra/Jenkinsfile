@@ -1,0 +1,146 @@
+pipeline {
+
+    // Run on any available Jenkins agent
+    agent any
+
+    // Using your Jenkins credential ID 'Lakshmi'
+    environment {
+        AWS_ACCESS_KEY_ID     = credentials('Lakshmi')
+        AWS_DEFAULT_REGION    = 'us-east-1'
+    }
+
+    stages {
+
+        // Stage 1: Pull latest code from Git repo
+        stage('Checkout') {
+            steps {
+                echo '========== Pulling Code from Git =========='
+                checkout scm
+            }
+        }
+        
+        
+        // Stage 2: Verify Terraform is installed
+        stage('Terraform Version') {
+            steps {
+        echo '========== Checking Terraform Version =========='
+             sh 'terraform version'
+             sh 'which terraform'
+            }
+        }
+
+        // Stage 3: Initialize Terraform - downloads providers & modules
+        stage('Terraform Init') {
+            steps {
+                echo '========== Initializing Terraform =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform init'
+                }
+            }
+        }
+
+        // Stage 4: Validate all .tf files in root and modules
+        stage('Terraform Validate') {
+            steps {
+                echo '========== Validating Terraform Code =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform validate'
+                }
+            }
+        }
+
+        // Stage 5: Check formatting of all terraform files
+        stage('Terraform Format Check') {
+            steps {
+                echo '========== Checking Terraform Formatting =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform fmt -check -recursive'
+                }
+            }
+        }
+
+        // Stage 6: Dry run - shows VPC, Subnets, EC2 to be created
+        stage('Terraform Plan') {
+            steps {
+                echo '========== Planning Terraform Changes =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform plan -var-file="terraform.tfvars" -out=tfplan'
+                }
+            }
+        }
+
+        // Stage 7: Manual approval before creating real AWS resources
+        stage('Approval') {
+            steps {
+                echo '========== Waiting for Manual Approval =========='
+                timeout(time: 5, unit: 'MINUTES') {
+                    input message: '''Review the plan:
+                    - 1 VPC (10.0.0.0/16)
+                    - 2 Public Subnets
+                    - 2 Private Subnets
+                    - 1 EC2 Instance (t3.micro)
+                    Do you want to Apply?''',
+                    ok: 'Yes, Apply!'
+                }
+            }
+        }
+
+        // Stage 8: Apply - creates VPC, Subnets, EC2 on AWS
+        stage('Terraform Apply') {
+            steps {
+                echo '========== Applying Terraform Changes =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform apply -auto-approve tfplan'
+                }
+            }
+        }
+
+        // Stage 9: Print outputs - vpc_id, public_ip, instance_id
+        stage('Show Outputs') {
+            steps {
+                echo '========== Terraform Outputs =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform output'
+                }
+            }
+        }
+
+    }
+
+    post {
+
+        // Success - all resources created
+        success {
+            echo '''
+            ========== SUCCESS ==========
+            Resources Created:
+            - VPC             : my-vpc
+            - Public Subnets  : 2 (us-east-1a, us-east-1b)
+            - Private Subnets : 2 (us-east-1a, us-east-1b)
+            - EC2 Instance    : my-ec2-instance (t3.micro)
+            ==============================
+            '''
+        }
+
+        // Failure - check logs
+        failure {
+            echo '''
+            ========== FAILED ==========
+            Possible reasons:
+            - Wrong credential ID (should be Lakshmi)
+            - Invalid ami_id in terraform.tfvars
+            - Wrong key_name in terraform.tfvars
+            - Terraform syntax error
+            ==============================
+            '''
+        }
+
+        // Always runs at the end
+        always {
+            echo '========== Pipeline Finished =========='
+            cleanWs()
+        }
+
+    }
+
+}
