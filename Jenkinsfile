@@ -71,7 +71,7 @@ pipeline {
 
         always {
             echo '========== Pipeline Finished =========='
-            cleanWs()
+            
         }
 
     }
