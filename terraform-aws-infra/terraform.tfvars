@@ -8,5 +8,5 @@ availability_zones = ["us-east-1a", "us-east-1b"]
 
 ami_id        = "ami-0c02fb55956c7d316"
 instance_type = "t3.micro"
-key_name      = "jenkinskey"
+key_name      = "jenkinskey-new"
 instance_name = "my-ec2-instance"
