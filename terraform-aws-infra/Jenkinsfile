@@ -1,0 +1,145 @@
+pipeline {
+
+    // Run on any available Jenkins agent
+    agent any
+
+    // AWS credentials from Jenkins credential store
+    environment {
+        AWS_ACCESS_KEY_ID     = credentials('aws-access-key-id')
+        AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
+        AWS_DEFAULT_REGION    = 'us-east-1'
+    }
+
+    stages {
+
+        // Stage 1: Pull latest code from Git repo
+        stage('Checkout') {
+            steps {
+                echo '========== Pulling Code from Git =========='
+                checkout scm
+            }
+        }
+
+        // Stage 2: Go into project folder and initialize Terraform
+        // Downloads AWS provider and all 3 modules (vpc, subnets, ec2)
+        stage('Terraform Init') {
+            steps {
+                echo '========== Initializing Terraform =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform init'
+                }
+            }
+        }
+
+        // Stage 3: Validate all .tf files in root and modules
+        // Checks vpc/main.tf, subnets/main.tf, ec2/main.tf for errors
+        stage('Terraform Validate') {
+            steps {
+                echo '========== Validating Terraform Code =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform validate'
+                }
+            }
+        }
+
+        // Stage 4: Check formatting of all terraform files
+        // Covers modules/vpc, modules/subnets, modules/ec2
+        stage('Terraform Format Check') {
+            steps {
+                echo '========== Checking Terraform Formatting =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform fmt -check -recursive'
+                }
+            }
+        }
+
+        // Stage 5: Dry run using terraform.tfvars
+        // Shows VPC, 2 public subnets, 2 private subnets, EC2 to be created
+        stage('Terraform Plan') {
+            steps {
+                echo '========== Planning Terraform Changes =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform plan -var-file="terraform.tfvars" -out=tfplan'
+                }
+            }
+        }
+
+        // Stage 6: Manual approval - review plan before creating real resources
+        // You have 5 minutes to approve or reject
+        stage('Approval') {
+            steps {
+                echo '========== Waiting for Manual Approval =========='
+                timeout(time: 5, unit: 'MINUTES') {
+                    input message: '''Review the plan:
+                    - 1 VPC (10.0.0.0/16)
+                    - 2 Public Subnets
+                    - 2 Private Subnets
+                    - 1 EC2 Instance (t3.micro)
+                    Do you want to Apply?''',
+                    ok: 'Yes, Apply!'
+                }
+            }
+        }
+
+        // Stage 7: Apply the saved tfplan
+        // Creates VPC → Internet Gateway → Subnets → Route Tables → EC2
+        stage('Terraform Apply') {
+            steps {
+                echo '========== Applying Terraform Changes =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform apply -auto-approve tfplan'
+                }
+            }
+        }
+
+        // Stage 8: Print outputs defined in root outputs.tf
+        // Shows: vpc_id, public_subnets, private_subnets, ec2_instance_id, ec2_public_ip
+        stage('Show Outputs') {
+            steps {
+                echo '========== Terraform Outputs =========='
+                dir('terraform-aws-infra') {
+                    sh 'terraform output'
+                }
+            }
+        }
+
+    }
+
+    // Post build actions based on pipeline result
+    post {
+
+        // All stages passed - infrastructure is live
+        success {
+            echo '''
+            ========== SUCCESS ==========
+            Resources Created:
+            - VPC         : my-vpc
+            - Public Subnets  : 2 (us-east-1a, us-east-1b)
+            - Private Subnets : 2 (us-east-1a, us-east-1b)
+            - EC2 Instance    : my-ec2-instance (t3.micro)
+            ==============================
+            '''
+        }
+
+        // Any stage failed
+        failure {
+            echo '''
+            ========== FAILED ==========
+            Pipeline failed! Possible reasons:
+            - Wrong AWS credentials
+            - Invalid ami_id in terraform.tfvars
+            - Wrong key_name in terraform.tfvars
+            - Terraform syntax error
+            ==============================
+            '''
+        }
+
+        // Always runs - cleanup
+        always {
+            echo '========== Pipeline Finished =========='
+            cleanWs()
+        }
+
+    }
+
+}
