@@ -1,9 +1,16 @@
-# Terraform files to ignore
+# Terraform providers and modules (large files)
 .terraform/
-.terraform.lock.hcl
+
+# State files (sensitive - contains resource IDs)
 *.tfstate
 *.tfstate.backup
-*.tfplan
+
+# Plan files
 tfplan
+*.tfplan
+
+# Private keys (sensitive)
 *.pem
+
+# Zip files
 *.zip
